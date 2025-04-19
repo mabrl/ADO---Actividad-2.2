@@ -1,0 +1,651 @@
+---
+title: "Actividad 2.2"
+author: "Manuel Abril"
+date: "`r Sys.Date()`"
+output:
+  prettydoc::html_pretty:
+    theme: architect
+    highlight: github
+---
+
+```{r class.source = 'fold-hide', setup, include=FALSE}
+library(knitr)
+library(rmdformats)
+
+## Global options
+options(max.print="75")
+opts_chunk$set(echo=TRUE,
+	             cache=FALSE,
+               prompt=FALSE,
+               tidy=TRUE,
+               comment=NA,
+               message=FALSE,
+               warning=FALSE)
+opts_knit$set(width=75)
+```
+
+```{r paquetes}
+if (!require(BiocManager)) install.packages("BiocManager")
+
+installifnot <- function (pkg){
+  if (!require(pkg, character.only=T)){
+    BiocManager::install(pkg)
+  }
+}
+# BiocManager::install() # Actualiza paquetes instalados
+installifnot("pd.mogene.1.0.st.v1")
+installifnot("mogene10sttranscriptcluster.db")
+installifnot("oligo")
+installifnot("limma")
+installifnot("Biobase")
+installifnot("arrayQualityMetrics")
+installifnot("genefilter")
+installifnot("annotate")
+installifnot("xtable")
+installifnot("gplots")
+installifnot("GOstats")
+
+if (!requireNamespace("GEOquery", quietly = TRUE)) {
+  install.packages("BiocManager")
+  BiocManager::install("GEOquery")
+}
+library(GEOquery)
+```
+
+- Comparación entre tres tipos de cáncer de mama
+
+Este estudio de caso se basa en un artículo cuyos datos están disponibles en GEO (Serie
+GSE1561).
+Los investigadores investigaron tres tipos de tumores de cáncer de mama: apocrino (APO),
+basal (BAS) y luminal (LUMI). La clasificación se basa en la resistencia de los tumores a los
+receptores de estrógenos y andrógenos.
+• Los tumores clasificados como “APO” son negativos para el receptor de estrógeno
+(ER-) y positivos para el receptor de andrógeno (AR+).
+• Aquellos clasificados como “LUMI” son ER+ y AR+ y
+• Aquellos clasificados como “BAS” son ER- y AR-
+
+La asignación de cada muestra a un grupo experimental se puede obtener en este enlace.
+Obviamente, este es un estudio observacional, pero su análisis también se puede realizar
+utilizando un enfoque de modelo lineal.
+1. 2. 3. Identifica los factores experimentales y sus niveles.
+Escribe la matriz de diseño asociada con este diseño de estudio.
+Construye la matriz de contraste necesaria para comparar cada tipo de tumor con
+los otros dos, es decir:
+a. “APO” vs “LUMI”
+b. “APO” vs “BAS”
+c. “LUMI” vs “BAS”
+
+```{r dir}
+workingDir <-getwd()
+dataDir <- file.path(workingDir, "datos")
+resultsDir <- file.path(workingDir, "resultados")
+```
+
+```{r gse}
+gse <- getGEO("GSE1561", GSEMatrix = TRUE)
+gse <- gse[[1]]  
+targets <- pData(gse)
+head(targets[, 1:5])  # Ver columnas disponibles
+write.csv(targets, file = "targets.csv", row.names = FALSE)
+targets <- read.csv("targets2.csv")
+table(targets$Group)
+```
+
+```{r leeTargets}
+library(Biobase)
+#TARGETS
+targetsDF <- read.csv("targets2.csv", header = TRUE, sep = ",") 
+#Definir las variables para las gráficas
+sampleNames <- as.character(targetsDF$SampleName)
+group <- as.character(targetsDF$Group)
+# Creamos un objeto AnnotatedDataFrame
+targets <- AnnotatedDataFrame(targetsDF)
+```
+
+Ahora leemos los archivos CEL
+
+```{r leeCELFiles}
+CELfiles <- targetsDF$FileName
+rawData <- read.celfiles(file.path("datos", CELfiles), phenoData = targets)
+rawData
+```
+
+# Exploración y control de calidad
+
+## Boxplot
+
+```{r graficosCalidad}
+#BOXPLOT
+etiquetas <- paste(sampleNames, targetsDF$Group, sep = " - ") 
+sampleColor <- as.numeric(as.factor(targetsDF$Group))
+boxplot(rawData, which="all",las=2, main="Distribución de los datos crudos", 
+        cex.axis=0.3, names=etiquetas)
+```
+
+## Clustering jerárquico
+
+```{r graficosCalidad2}
+#HIERARQUICAL CLUSTERING
+etiquetas <- paste(sampleNames, targetsDF$Group, sep = " - ")
+clust.euclid.average <- hclust(dist(t(exprs(rawData))), method = "average")
+plot(clust.euclid.average,
+     labels = etiquetas,
+     main = "Hierarchical clustering of RawData",
+     cex = 0.5,
+     hang = -1)
+```
+
+## PCA
+
+```{r graficosCalidad3}
+#PRINCIPAL COMPONENT ANALYSIS
+plotPCA <- function ( X, labels=NULL, colors=NULL, dataDesc="", scale=FALSE, formapunts=NULL, myCex=0.3,...)
+{
+  pcX<-prcomp(t(X), scale=scale) # o prcomp(t(X))
+  loads<- round(pcX$sdev^2/sum(pcX$sdev^2)*100,1)
+  xlab<-c(paste("PC1",loads[1],"%"))
+  ylab<-c(paste("PC2",loads[2],"%"))
+  if (is.null(colors)) colors=1
+  plot(pcX$x[,1:2],xlab=xlab,ylab=ylab, col=colors, pch=formapunts, 
+       xlim=c(min(pcX$x[,1])-100000, max(pcX$x[,1])+100000),ylim=c(min(pcX$x[,2])-100000, max(pcX$x[,2])+100000))
+  text(pcX$x[,1],pcX$x[,2], labels, pos=3, cex=myCex)
+  title(paste("Plot of first 2 PCs for expressions in", dataDesc, sep=" "), cex=0.8)
+}
+
+groupFactor <- as.factor(targets$Group)
+groupColors <- as.numeric(groupFactor)
+
+plotPCA(exprs(rawData), 
+        labels = as.character(groupFactor), 
+        dataDesc = "raw data", 
+        colors = groupColors,
+        formapunts = c(rep(16, length(groupFactor))), 
+        myCex = 0.4)
+```
+
+### Guardamos las tres imágenes en el folder
+
+```{r graficosCalidadAPDF}
+# Guardar en un archivo
+pdf(file.path("resultados", "QCPlots_Raw.pdf"))
+boxplot(rawData, which="all",las=2, main="Distribución de los datos crudos", 
+        cex.axis=0.3, names=etiquetas)
+plot(clust.euclid.average,
+     labels = etiquetas,
+     main = "Hierarchical clustering of RawData",
+     cex = 0.5,
+     hang = -1)
+plotPCA(exprs(rawData), 
+        labels = as.character(groupFactor), 
+        dataDesc = "raw data", 
+        colors = groupColors,
+        formapunts = c(rep(16, length(groupFactor))), 
+        myCex = 0.4)
+dev.off()
+
+```
+# Control de calidad  
+
+```{r arrayQM}
+rerun <- FALSE
+if(rerun){
+  arrayQualityMetrics(rawData,  reporttitle="QC_RawData", force=TRUE)
+}
+```
+
+# Normalización
+
+Utilzamos el método RMA
+
+```{r normalizacion}
+eset<-rma(rawData)
+write.exprs(eset, file.path("resultados", "NormData.txt"))
+eset
+```
+
+# Filtrado
+
+```{r filtrado}
+library(genefilter) 
+annotation(eset) <- "hgu133a.db" # Tuve que instalar los paquetes correspondientes
+eset_filtered <- nsFilter(eset, var.func=IQR,
+         var.cutoff=0.75, var.filter=TRUE, require.entrez = TRUE,
+         filterByQuantile=TRUE)
+#NUMBER OF GENES REMOVED
+print(eset_filtered)
+#NUMBER OF GENES IN
+print(eset_filtered$eset)
+```
+
+La matriz de datos filtrados se extrae del objeto \`filtered$eset$ y se utilizará en los pasos siguientes.
+
+```{r Datosfiltrados}
+filteredEset <- eset_filtered$eset
+filteredData <- exprs(filteredEset)
+colnames(filteredData) <- pData(eset_filtered$eset)$ShortName
+```
+
+# Selección de genes
+
+Construimos un modelo lineal, es decir una matriz de diseño y una de contrastes, para el análisis.
+
+## Construimos la matriz de diseño:
+
+```{r linearModel}
+library(limma)
+treat <- pData(filteredEset)$Group
+lev <- factor(treat, levels = unique(treat))
+design <-model.matrix(~0+lev)
+colnames(design) <- levels(lev)
+rownames(design) <- sampleNames
+print(design)
+```
+
+## ...A continuación la matriz de contraste:
+
+```{r linearModel2}
+#COMPARISON
+colnames(design) <- make.names(colnames(design))
+cont.matrix1 <- makeContrasts(
+  Luminal_vs_Basal = Luminal - Basal.like,
+  Luminal_vs_Apocrine = Luminal - Apocrine,
+  Apocrine_vs_Basal = Basal.like - Apocrine,
+  levels = design
+)
+comparisonName <- "Matriz de contraste"
+print(cont.matrix1)
+```
+
+# Estimamos el modelo
+
+```{r estimaModelo}
+#MODEL FIT
+fit1 <- lmFit(filteredData, design)
+fit.main1 <- contrasts.fit(fit1, cont.matrix1)
+fit.main1 <- eBayes(fit.main1)
+```
+
+## Contraste LUMINAL VS BASAL: 
+
+```{r resultadostoptable}
+topTab1 <-  topTable (fit.main1, number=nrow(fit.main1), coef="Luminal_vs_Basal", adjust="fdr",lfc=3, p.value=0.05)
+topTab1
+```
+
+## Ahora, Luminal vs Apocrino:
+
+```{r resultadostoptable2}
+topTab2 <-  topTable (fit.main1, number=nrow(fit.main1), coef="Luminal_vs_Apocrine", adjust="fdr",lfc=3, p.value=0.05)
+topTab2
+```
+
+## Por último, Apocrino vs Basal
+
+```{r resultadostoptable3}
+topTab3 <-  topTable (fit.main1, number=nrow(fit.main1), coef="Apocrine_vs_Basal", adjust="fdr",lfc=3, p.value=0.05)
+topTab3
+```
+
+## Verificar la información de los probes
+
+```{r}
+library(hgu133a.db)
+keytypes(hgu133a.db)
+anotaciones<- AnnotationDbi::select (hgu133a.db, keys=rownames(filteredData), columns=c("ENTREZID", "SYMBOL"))
+```
+
+### Añadimos las columnas DE LOS GENES a la "topTable".
+
+### Primera: Luminal_vs_Basal
+
+```{r}
+library(dplyr)
+topTabAnotada1<- topTab1 %>%  
+  mutate(PROBEID=rownames(topTab1)) %>%
+  left_join(anotaciones) %>% 
+  arrange(P.Value) %>%
+  select(7,8,9, 1:6)
+
+head(topTabAnotada1)
+```
+
+### Segunda: Luminal_vs_Apocrino
+
+```{r}
+topTabAnotada2 <- topTab2 %>%  
+  mutate(PROBEID=rownames(topTab2)) %>%
+  left_join(anotaciones) %>% 
+  arrange(P.Value) %>%
+  select(7,8,9, 1:6)
+
+head(topTabAnotada2)
+```
+
+### Segunda: Basal vs Apocrino
+
+```{r}
+topTabAnotada3 <- topTab3 %>%  
+  mutate(PROBEID=rownames(topTab3)) %>%
+  left_join(anotaciones) %>% 
+  arrange(P.Value) %>%
+  select(7,8,9, 1:6)
+
+head(topTabAnotada3)
+```
+
+
+#### Los resultados se escriben en dos archivos html:
+
+```{r}
+library(xtable)
+write.csv2(topTabAnotada1, file= file.path("resultados","Luminal_vs_Basal.csv"))
+print(xtable(topTab1,align="lllllll"),type="html",html.table.attributes="",
+      file=file.path("resultados","Luminal_vs_Basal.html"))
+```
+
+```{r}
+library(xtable)
+write.csv2(topTabAnotada2, file= file.path("resultados","Luminal_vs_Apocrino.csv"))
+print(xtable(topTab2,align="lllllll"),type="html",html.table.attributes="",
+      file=file.path("resultados","Luminal_vs_Apocrino.html"))
+```
+
+```{r}
+library(xtable)
+write.csv2(topTabAnotada3, file= file.path("resultados","Luminal_vs_Apocrino.csv"))
+print(xtable(topTab3,align="lllllll"),type="html",html.table.attributes="",
+      file=file.path("resultados","Luminal_vs_Apocrino.html"))
+```
+
+# Visualización de resultados:
+
+## VP: Luminal v Basal
+
+```{r volcanoPlot1}
+# Volcano plot para Luminal vs Basal
+library(hgu133a.db)
+
+# Obtener anotaciones
+annot <- AnnotationDbi::select(hgu133a.db,
+                               keys = rownames(fit.main1),
+                               columns = "SYMBOL",
+                               keytype = "PROBEID")
+genenames <- annot$SYMBOL[match(rownames(fit.main1), annot$PROBEID)]
+
+volcanoplot(fit.main1[, "Luminal_vs_Basal"], 
+            highlight = 15, 
+            names = genenames, 
+            main = "Luminal vs Basal",
+            cex.main = 0.8,
+            cex = 0.4)
+abline(v = c(-3, 3))
+
+pdf(file.path("resultados", "Volcano_Luminal_vs_Basal.pdf"))
+volcanoplot(fit.main1[, "Luminal_vs_Basal"], 
+            highlight = 15, 
+            names = genenames, 
+            main = "Luminal vs Basal",
+            cex.main = 0.8,
+            cex = 0.4)
+abline(v = c(-3, 3))
+dev.off()
+```
+
+## VP: Luminal v Apocrino
+
+```{r volcanoPlot2}
+# Volcano plot para Luminal vs Apocrine
+
+library(hgu133a.db)
+
+annot <- AnnotationDbi::select(hgu133a.db,
+                               keys = rownames(fit.main1),
+                               columns = "SYMBOL",
+                               keytype = "PROBEID")
+
+volcanoplot(fit.main1[, "Luminal_vs_Apocrine"], 
+            highlight = 15, 
+            names = genenames, 
+            main = "Luminal vs Apocrine",
+            cex.main = 0.8,
+            cex = 0.4)
+abline(v = c(-3, 3))
+
+pdf(file.path("resultados", "Volcano_Luminal_vs_Apocrine.pdf"))
+volcanoplot(fit.main1[, "Luminal_vs_Apocrine"], 
+            highlight = 15, 
+            names = genenames, 
+            main = "Luminal vs Apocrine",
+            cex.main = 0.8,
+            cex = 0.4)
+abline(v = c(-3, 3))
+dev.off()
+```
+
+## VP: Basal v Apocrino
+
+```{r volcanoPlot3}
+# Volcano plot para Basal v Apocrino
+
+library(hgu133a.db)
+
+annot <- AnnotationDbi::select(hgu133a.db,
+                               keys = rownames(fit.main1),
+                               columns = "SYMBOL",
+                               keytype = "PROBEID")
+
+volcanoplot(fit.main1[, "Luminal_vs_Apocrine"], 
+            highlight = 15, 
+            names = genenames, 
+            main = "Luminal vs Apocrine",
+            cex.main = 0.8,
+            cex = 0.4)
+abline(v = c(-3, 3))
+
+pdf(file.path("resultados", "Volcano_Basal_vs_Apocrine.pdf"))
+volcanoplot(fit.main1[, "Apocrine_vs_Basal"], 
+            highlight = 15, 
+            names = genenames, 
+            main = "Apocrine_vs_Basal",
+            cex.main = 0.8,
+            cex = 0.4)
+abline(v = c(-3, 3))
+dev.off()
+```
+
+## Heatmaps
+
+### Heatmap (Luminal vs Basal)
+
+```{r heatmap1}
+library(gplots)
+# Filtramos el contraste
+topTab <- topTable(fit.main1, coef = "Luminal_vs_Basal", lfc = 1, p.value = 0.05, number = 50)
+selectedRows <- rownames(filteredData) %in% rownames(topTab)
+selectedData <- filteredData[selectedRows,]
+sampleInfo <- pData(filteredEset)
+muestrasUsar <- sampleInfo$Group %in% c("Luminal", "Basal.like")
+selectedData <- selectedData[, muestrasUsar]
+sampleGroups <- sampleInfo$Group[muestrasUsar]
+
+# Cambiamos los probes por los nombres de genes.
+library(AnnotationDbi)
+library(hgu133a.db)
+geneNames <- AnnotationDbi::select(hgu133a.db, 
+                                   keys = rownames(selectedData), 
+                                   columns = c("SYMBOL"), 
+                                   keytype = "PROBEID")
+geneNames <- geneNames[match(rownames(selectedData), geneNames$PROBEID), ]
+rownames(selectedData) <- geneNames$SYMBOL
+selectedData <- selectedData[!is.na(rownames(selectedData)), ]
+
+ColSideColors <- ifelse(sampleGroups == "Luminal", "red", "darkblue")
+
+# HEATMAP
+my_palette <- colorRampPalette(c("darkblue", "red"))(n = 299)
+pdf(file = file.path("resultados", "heatmap_luminal_vs_basal.pdf"), width = 10, height = 10)
+heatmap.2(selectedData,
+          Rowv = TRUE,
+          Colv = TRUE,
+          main = "Luminal vs Basal (genes FC≥1, p<0.05)",
+          cex.main = 0.8,
+          scale = "row",
+          col = my_palette,
+          sepcolor = "white",
+          sepwidth = c(0.05, 0.05),
+          cexRow = 0.5,
+          cexCol = 0.9,
+          key = TRUE,
+          keysize = 1.0,
+          density.info = "histogram",
+          ColSideColors = ColSideColors,
+          tracecol = NULL,
+          srtCol = 30)
+dev.off()
+```
+
+### Heatmap (Luminal vs Apocrino)
+
+```{r heatmap2}
+# Filtrar genes significativos del contraste
+topTab <- topTable(fit.main1, coef = "Luminal_vs_Apocrine", lfc = 1, p.value = 0.05, number = 50)
+selectedRows <- rownames(filteredData) %in% rownames(topTab)
+selectedData <- filteredData[selectedRows,]
+sampleInfo <- pData(filteredEset)
+muestrasUsar <- sampleInfo$Group %in% c("Luminal", "Apocrine")
+selectedData <- selectedData[, muestrasUsar]
+sampleGroups <- sampleInfo$Group[muestrasUsar]
+
+geneNames <- AnnotationDbi::select(hgu133a.db, 
+                                   keys = rownames(selectedData), 
+                                   columns = c("SYMBOL"), 
+                                   keytype = "PROBEID")
+geneNames <- geneNames[match(rownames(selectedData), geneNames$PROBEID), ]
+rownames(selectedData) <- geneNames$SYMBOL
+selectedData <- selectedData[!is.na(rownames(selectedData)), ]
+ColSideColors <- ifelse(sampleGroups == "Luminal", "red", "darkgreen")  # azul = Apocrine
+
+my_palette <- colorRampPalette(c("black", "red"))(n = 299)
+library(gplots)
+pdf(file = file.path("resultados", "heatmap_luminal_vs_apocrino.pdf"), width = 10, height = 10)
+heatmap.2(selectedData,
+          Rowv = TRUE,
+          Colv = TRUE,
+          main = "Luminal vs Apocrine (genes FC≥1, p<0.05)",
+          cex.main = 0.8,
+          scale = "row",
+          col = my_palette,
+          sepcolor = "white",
+          sepwidth = c(0.05, 0.05),
+          cexRow = 0.5,
+          cexCol = 0.9,
+          key = TRUE,
+          keysize = 1.0,
+          density.info = "histogram",
+          ColSideColors = ColSideColors,
+          tracecol = NULL,
+          srtCol = 30)
+dev.off()
+```
+
+### Heatmap (Basal vs Apocrino)
+
+```{r heatmap3}
+# Filtrar genes significativos del contraste
+topTab <- topTable(fit.main1, coef = "Apocrine_vs_Basal", lfc = 1, p.value = 0.05, number = 50)
+selectedRows <- rownames(filteredData) %in% rownames(topTab)
+selectedData <- filteredData[selectedRows,]
+sampleInfo <- pData(filteredEset)
+muestrasUsar <- sampleInfo$Group %in% c("Luminal", "Apocrine")
+selectedData <- selectedData[, muestrasUsar]
+sampleGroups <- sampleInfo$Group[muestrasUsar]
+
+geneNames <- AnnotationDbi::select(hgu133a.db, 
+                                   keys = rownames(selectedData), 
+                                   columns = c("SYMBOL"), 
+                                   keytype = "PROBEID")
+geneNames <- geneNames[match(rownames(selectedData), geneNames$PROBEID), ]
+rownames(selectedData) <- geneNames$SYMBOL
+selectedData <- selectedData[!is.na(rownames(selectedData)), ]
+ColSideColors <- ifelse(sampleGroups == "Luminal", "red", "darkgreen")  # azul = Apocrine
+
+my_palette <- colorRampPalette(c("black", "red"))(n = 299)
+library(gplots)
+pdf(file = file.path("resultados", "heatmap_Apocrine_vs_Basal.pdf"), width = 10, height = 10)
+heatmap.2(selectedData,
+          Rowv = TRUE,
+          Colv = TRUE,
+          main = "Apocrine_vs_Basal",
+          cex.main = 0.8,
+          scale = "row",
+          col = my_palette,
+          sepcolor = "white",
+          sepwidth = c(0.05, 0.05),
+          cexRow = 0.5,
+          cexCol = 0.9,
+          key = TRUE,
+          keysize = 1.0,
+          density.info = "histogram",
+          ColSideColors = ColSideColors,
+          tracecol = NULL,
+          srtCol = 30)
+dev.off()
+```
+
+# Análisis de significación biológica
+
+La mayoría de programas necesitan que los identificadores de los genes sean en formato "ENTREZ" por lo que prepararemos ambas listas a la vez (aunque ya teníamos la de los genes seleccionados).
+
+```{r}
+library(hgu133a.db)
+probesUniverse <- rownames(filteredData)
+entrezUniverse <- AnnotationDbi::select(hgu133a.db,
+                                        keys = probesUniverse,
+                                        columns = "ENTREZID",
+                                        keytype = "PROBEID")$ENTREZID
+topTab <- topTable(fit.main1, coef = "Luminal_vs_Basal", number = 50)
+topProbes <- rownames(topTab)
+entrezTop <- AnnotationDbi::select(hgu133a.db,
+                                   keys = topProbes,
+                                   columns = "ENTREZID",
+                                   keytype = "PROBEID")
+topGenes <- unique(na.omit(entrezTop$ENTREZID))
+entrezUniverse <- entrezUniverse[!duplicated(entrezUniverse)]
+
+```
+
+```{r createHyperparameter}
+library(GOstats)
+
+GOparams = new("GOHyperGParams",
+    geneIds=topGenes, universeGeneIds=entrezUniverse,
+    annotation="hgu133a.db", ontology="BP",
+    pvalueCutoff=0.01)
+```
+
+```{r runORAnalysis}
+GOhyper = hyperGTest(GOparams)
+```
+
+```{r summarizeORAesults}
+head(summary(GOhyper))
+dim(summary(GOhyper))
+```
+
+```{r ORAreport}
+# Creamos un informe html con los resultados
+GOfilename =file.path("resultados", "GOResults.html")
+htmlReport(GOhyper, file = GOfilename, summary.args=list("htmlLinks"=TRUE))
+```
+
+
+
+
+
+
+
+
+
+
+
+
